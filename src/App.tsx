@@ -41,6 +41,12 @@ function compactLabelClass(label: '굉장' | '보통' | '별로') {
   return 'bg-white/10 text-slate-100';
 }
 
+function statusBadgeClass(status: '추천' | '노멀' | '비추천') {
+  if (status === '추천') return 'border-emerald-400/40 bg-emerald-500/20 text-emerald-200';
+  if (status === '비추천') return 'border-rose-400/40 bg-rose-500/20 text-rose-200';
+  return 'border-white/10 bg-white/10 text-slate-100';
+}
+
 function pickType(list: TypeName[], index: number, next: string): TypeName[] {
   const copy = [...list];
   if (!next) {
@@ -61,6 +67,13 @@ function pickChargedMove(list: TypeName[], index: number, next: string): TypeNam
   }
   const cleaned = copy.filter(Boolean) as TypeName[];
   return cleaned.filter((type, idx) => cleaned.indexOf(type) === idx).slice(0, 2);
+}
+
+function getDisplayStatus(slotId: string, analysis: SlotAnalysis | undefined, recommendedSlotId: string | undefined): '추천' | '노멀' | '비추천' {
+  if (!analysis) return '노멀';
+  if (slotId === recommendedSlotId) return '추천';
+  if (analysis.overallLabel === '별로') return '비추천';
+  return '노멀';
 }
 
 function TypeIcon({ type, size = 'md' }: { type: TypeName; size?: 'sm' | 'md' }) {
@@ -115,16 +128,27 @@ function TypeSelect({
   );
 }
 
-function OpponentTypeButton({ type, selected, onClick }: { type: TypeName; selected: boolean; onClick: () => void }) {
+function OpponentTypeButton({
+  type,
+  selected,
+  shortcut,
+  onClick,
+}: {
+  type: TypeName;
+  selected: boolean;
+  shortcut?: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-2 py-2 text-sm transition ${
+      className={`relative flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-2 py-2 text-sm transition ${
         selected ? 'border-cyan-300 bg-cyan-400/10 shadow-lg shadow-cyan-900/20' : 'border-white/10 bg-white/5 hover:bg-white/10'
       }`}
       title={TYPE_LABELS[type]}
     >
+      {shortcut ? <span className="absolute right-1 top-1 text-[10px] text-slate-400">{shortcut}</span> : null}
       <TypeIcon type={type} />
       <span className="hidden text-xs sm:inline">{TYPE_LABELS[type]}</span>
     </button>
@@ -135,7 +159,7 @@ function SlotEditorCard({
   slot,
   index,
   selected,
-  recommended,
+  status,
   analysis,
   onSelect,
   onChange,
@@ -143,7 +167,7 @@ function SlotEditorCard({
   slot: PokemonSlot;
   index: number;
   selected: boolean;
-  recommended: boolean;
+  status: '추천' | '노멀' | '비추천';
   analysis?: SlotAnalysis;
   onSelect: () => void;
   onChange: (updater: (slot: PokemonSlot) => PokemonSlot) => void;
@@ -156,8 +180,7 @@ function SlotEditorCard({
           <div className="mt-1 text-lg font-semibold">{slot.nickname || `내 포켓몬 ${index + 1}`}</div>
         </button>
         <div className="flex flex-col items-end gap-2">
-          {selected ? <span className="rounded-full bg-cyan-400/20 px-2 py-1 text-xs text-cyan-200">현재 출전</span> : null}
-          {recommended && !selected ? <span className="rounded-full bg-emerald-400/20 px-2 py-1 text-xs text-emerald-200">추천 교체</span> : null}
+          <span className={`rounded-full border px-2 py-1 text-xs ${statusBadgeClass(status)}`}>{status}</span>
           {analysis ? <span className={`rounded-full border px-2 py-1 text-xs ${labelClass(analysis.overallLabel)}`}>{analysis.overallLabel}</span> : null}
         </div>
       </div>
@@ -206,14 +229,14 @@ function BattleResultCard({
   index,
   analysis,
   selected,
-  recommended,
+  status,
   onSelect,
 }: {
   slot: PokemonSlot;
   index: number;
   analysis?: SlotAnalysis;
   selected: boolean;
-  recommended: boolean;
+  status: '추천' | '노멀' | '비추천';
   onSelect: () => void;
 }) {
   return (
@@ -231,8 +254,7 @@ function BattleResultCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
-          {selected ? <span className="rounded-full bg-cyan-400/20 px-2 py-1 text-xs text-cyan-200">현재 출전</span> : null}
-          {recommended && !selected ? <span className="rounded-full bg-emerald-400/20 px-2 py-1 text-xs text-emerald-200">추천 교체</span> : null}
+          <span className={`rounded-full border px-2 py-1 text-xs ${statusBadgeClass(status)}`}>{status}</span>
         </div>
       </div>
 
@@ -273,6 +295,12 @@ function BattleResultCard({
     </button>
   );
 }
+
+const TYPE_SHORTCUTS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o'] as const;
+const TYPE_SHORTCUT_MAP: Record<string, TypeName> = TYPE_SHORTCUTS.reduce((acc, key, index) => {
+  acc[key] = TYPE_NAMES[index];
+  return acc;
+}, {} as Record<string, TypeName>);
 
 export default function App() {
   const [teams, setTeams] = useState<SavedTeam[]>([]);
@@ -321,6 +349,27 @@ export default function App() {
   }, [analysisSorted]);
 
   const recommendedSlotId = analysisSorted[0]?.slotId;
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const key = event.key.toLowerCase();
+      const mappedType = TYPE_SHORTCUT_MAP[key];
+      if (!mappedType) return;
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName?.toLowerCase();
+      if (tagName === 'input' || tagName === 'select' || tagName === 'textarea' || target?.isContentEditable) return;
+
+      event.preventDefault();
+      setOpponentTypes((current) => {
+        if (current.includes(mappedType)) return current.filter((item) => item !== mappedType);
+        if (current.length >= 2) return [current[1], mappedType];
+        return [...current, mappedType];
+      });
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   function updateSelectedTeam(mutator: (team: SavedTeam) => SavedTeam) {
     setTeams((current) => current.map((team) => (team.id === selectedTeamId ? mutator(team) : team)));
@@ -463,7 +512,7 @@ export default function App() {
                       slot={slot}
                       index={index}
                       selected={activeSlotId === slot.id}
-                      recommended={recommendedSlotId === slot.id}
+                      status={getDisplayStatus(slot.id, analysisBySlotId[slot.id], recommendedSlotId)}
                       analysis={analysisBySlotId[slot.id]}
                       onSelect={() => setActiveSlotId(slot.id)}
                       onChange={(updater) => updateSlot(slot.id, updater)}
@@ -484,11 +533,11 @@ export default function App() {
 
               <div className="space-y-4">
                 <div className="sticky top-0 z-10 -mx-1 rounded-2xl border border-white/10 bg-slate-950/90 p-3 backdrop-blur">
-                  <div className="mb-2 text-xs text-slate-400">현재 출전 포켓몬 선택</div>
+                  <div className="mb-2 text-xs text-slate-400">포켓몬 선택</div>
                   <div className="grid grid-cols-3 gap-2">
                     {selectedTeam?.slots.map((slot, index) => {
                       const selected = activeSlotId === slot.id;
-                      const recommended = recommendedSlotId === slot.id;
+                      const status = getDisplayStatus(slot.id, analysisBySlotId[slot.id], recommendedSlotId);
                       return (
                         <button
                           key={slot.id}
@@ -498,14 +547,18 @@ export default function App() {
                             selected ? 'border-cyan-300 bg-cyan-400/10' : 'border-white/10 bg-black/20 hover:bg-white/10'
                           }`}
                         >
-                          <div className="text-[11px] text-slate-400">포켓몬 {index + 1}</div>
-                          <div className="mt-1 truncate font-semibold">{slot.nickname}</div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="text-[11px] text-slate-400">포켓몬 {index + 1}</div>
+                              <div className="mt-1 truncate font-semibold">{slot.nickname}</div>
+                            </div>
+                            <span className={`rounded-full border px-2 py-1 text-[10px] ${statusBadgeClass(status)}`}>{status}</span>
+                          </div>
                           <div className="mt-2 flex flex-wrap gap-1">
                             {slot.types.slice(0, 2).map((type) => (
                               <TypeIcon key={`${slot.id}-pick-${type}`} type={type} size="sm" />
                             ))}
                           </div>
-                          {!selected && recommended ? <div className="mt-2 text-[11px] text-emerald-200">추천 교체</div> : null}
                         </button>
                       );
                     })}
@@ -516,7 +569,7 @@ export default function App() {
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-sm font-semibold">상대 타입 선택</div>
-                      <div className="text-xs text-slate-400">최대 2개까지 선택</div>
+                      <div className="text-xs text-slate-400">최대 2개까지 선택 · 키보드 1~9, Q~O 토글</div>
                     </div>
                     {opponentTypes.length > 0 ? (
                       <button type="button" onClick={() => setOpponentTypes([])} className="rounded-full border border-white/15 px-3 py-1 text-xs">
@@ -524,11 +577,15 @@ export default function App() {
                       </button>
                     ) : null}
                   </div>
+                  <div className="mb-3 rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-2 text-xs text-slate-300">
+                    1 노말 · 2 격투 · 3 비행 · 4 독 · 5 땅 · 6 바위 · 7 벌레 · 8 고스트 · 9 강철 · Q 불꽃 · W 물 · E 풀 · R 전기 · T 에스퍼 · Y 얼음 · U 드래곤 · I 악 · O 페어리
+                  </div>
                   <div className="grid grid-cols-6 gap-2 sm:grid-cols-6 md:grid-cols-6 xl:grid-cols-9">
-                    {TYPE_NAMES.map((type) => (
+                    {TYPE_NAMES.map((type, index) => (
                       <OpponentTypeButton
                         key={`opponent-${type}`}
                         type={type}
+                        shortcut={TYPE_SHORTCUTS[index]}
                         selected={opponentTypes.includes(type)}
                         onClick={() =>
                           setOpponentTypes((current) => {
@@ -550,10 +607,17 @@ export default function App() {
                   <div className="rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-3">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
-                        <div className="text-xs text-cyan-200">현재 출전 포켓몬</div>
+                        <div className="text-xs text-cyan-200">선택된 포켓몬</div>
                         <div className="mt-1 text-lg font-semibold">{activeSlot.nickname}</div>
                       </div>
-                      {activeAnalysis ? <span className={`rounded-full border px-3 py-1 text-sm ${labelClass(activeAnalysis.overallLabel)}`}>종합 {activeAnalysis.overallLabel}</span> : null}
+                      {activeAnalysis ? (
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-full border px-3 py-1 text-sm ${statusBadgeClass(getDisplayStatus(activeSlot.id, activeAnalysis, recommendedSlotId))}`}>
+                            {getDisplayStatus(activeSlot.id, activeAnalysis, recommendedSlotId)}
+                          </span>
+                          <span className={`rounded-full border px-3 py-1 text-sm ${labelClass(activeAnalysis.overallLabel)}`}>종합 {activeAnalysis.overallLabel}</span>
+                        </div>
+                      ) : null}
                     </div>
                     {activeAnalysis ? (
                       <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs sm:text-sm">
@@ -579,7 +643,7 @@ export default function App() {
                 <div className="rounded-2xl bg-black/20 p-3">
                   <div className="mb-3">
                     <h3 className="font-semibold">유/불리 결과</h3>
-                    <p className="text-xs text-slate-400">포켓몬 1 / 2 / 3 순서를 그대로 유지하고, 가장 적합한 교체만 배지로 강조합니다.</p>
+                    <p className="text-xs text-slate-400">포켓몬 1 / 2 / 3 순서를 그대로 유지하고, 추천 / 노멀 / 비추천 상태를 바로 읽을 수 있게 표시합니다.</p>
                   </div>
                   <div className="grid gap-3 lg:grid-cols-3">
                     {selectedTeam?.slots.map((slot, index) => (
@@ -589,7 +653,7 @@ export default function App() {
                         index={index}
                         analysis={analysisBySlotId[slot.id]}
                         selected={slot.id === activeSlotId}
-                        recommended={slot.id === recommendedSlotId}
+                        status={getDisplayStatus(slot.id, analysisBySlotId[slot.id], recommendedSlotId)}
                         onSelect={() => setActiveSlotId(slot.id)}
                       />
                     ))}
